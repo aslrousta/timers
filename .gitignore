@@ -1,0 +1,7 @@
+*~
+*.tmp
+*.so
+*.swp
+.DS_Store
+/.vscode
+/build
