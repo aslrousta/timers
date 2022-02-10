@@ -19,6 +19,7 @@
 
 #include "timers.h"
 
+#include <limits.h>
 #include <pthread.h>
 #include <time.h>
 
@@ -48,18 +49,20 @@ static void heap_push(heap_t *h, timer_t *t) {
 }
 
 static void heap_pop(heap_t *h) {
+  h->timers[0] = h->timers[--h->size];
   int i = 0;
   while (i < h->size) {
-    int l = 2 * i + 1; /* left child */
-    int r = 2 * i + 2; /* right child */
+    int l = i * 2 + 1; /* left child */
+    int r = i * 2 + 2; /* right child */
     int min = i;
     if (l < h->size && h->timers[l].dt < h->timers[min].dt) min = l;
     if (r < h->size && h->timers[r].dt < h->timers[min].dt) min = r;
     if (min == i) break;
+    timer_t tmp = h->timers[i];
     h->timers[i] = h->timers[min];
+    h->timers[min] = tmp;
     i = min;
   }
-  h->size--;
 }
 
 static timer_t *heap_min(heap_t *h) {
@@ -76,7 +79,7 @@ struct timespec era;
 /* computes the passed time since era in milliseconds */
 static duration_t passed() {
   struct timespec now;
-  clock_gettime(CLOCK_REALTIME, &now);
+  clock_gettime(CLOCK_MONOTONIC, &now);
   return (now.tv_sec - era.tv_sec) * 1000LL +
          (now.tv_nsec - era.tv_nsec) / 1000000;
 }
@@ -89,16 +92,9 @@ static void *loop(void *arg) {
       break;
     }
     timer_t *t = heap_min(&heap);
-    if (!t) {
+    if (!t || t->dt > passed()) {
       pthread_mutex_unlock(&lock);
-      struct timespec nap = {.tv_sec = 0, .tv_nsec = 1000000}; /* 1ms */
-      nanosleep(&nap, NULL);
-    } else if (t->dt > passed()) {
-      struct timespec nap = {
-          .tv_sec = t->dt / 1000,
-          .tv_nsec = (t->dt % 1000) * 1000000,
-      };
-      pthread_mutex_unlock(&lock);
+      struct timespec nap = {0, 10000000}; /* 10 ms */
       nanosleep(&nap, NULL);
     } else {
       void (*cb)(void *) = t->cb;
@@ -121,7 +117,7 @@ int timers_init(void) {
     pthread_mutex_unlock(&lock);
     return -1;
   }
-  clock_gettime(CLOCK_REALTIME, &era);
+  clock_gettime(CLOCK_MONOTONIC, &era);
   heap.size = 0;
   running = 1;
   pthread_mutex_unlock(&lock);
