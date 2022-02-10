@@ -26,4 +26,5 @@ project(
 add_library(timers SHARED timers.c)
 
 find_package(Threads REQUIRED)
+target_compile_options(timers PRIVATE -Wall -Werror)
 target_link_libraries(timers PUBLIC Threads::Threads)

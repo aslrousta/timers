@@ -22,41 +22,110 @@
 #include <pthread.h>
 #include <time.h>
 
+typedef long long duration_t; /* in ms */
+typedef struct timer {
+  duration_t dt;
+  void (*cb)(void *);
+  void *v;
+} timer_t;
+
+#define MAX_TIMERS_PER_HEAP 1000
+typedef struct heap {
+  timer_t timers[MAX_TIMERS_PER_HEAP];
+  int size;
+} heap_t;
+
+static void heap_push(heap_t *h, timer_t *t) {
+  int i = h->size;
+  while (i > 0) {
+    int p = (i - 1) / 2; /* parent */
+    if (h->timers[p].dt <= t->dt) break;
+    h->timers[i] = h->timers[p];
+    i = p;
+  }
+  h->timers[i] = *t;
+  h->size++;
+}
+
+static void heap_pop(heap_t *h) {
+  int i = 0;
+  while (i < h->size) {
+    int l = 2 * i + 1; /* left child */
+    int r = 2 * i + 2; /* right child */
+    int min = i;
+    if (l < h->size && h->timers[l].dt < h->timers[min].dt) min = l;
+    if (r < h->size && h->timers[r].dt < h->timers[min].dt) min = r;
+    if (min == i) break;
+    h->timers[i] = h->timers[min];
+    i = min;
+  }
+  h->size--;
+}
+
+static timer_t *heap_min(heap_t *h) {
+  if (h->size == 0) return NULL;
+  return &h->timers[0];
+}
+
+static heap_t heap;
 static pthread_t th;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static volatile int running = 0;
+static int running = 0;
+struct timespec era;
 
-typedef struct ticker {
-  long long next; /* next tick in ms since era */
-  int interval;   /* interval in ms */
-  void (*callback)(void *);
-  void *arg;
-  int rep;
-} ticker_t;
+/* computes the passed time since era in milliseconds */
+static duration_t passed() {
+  struct timespec now;
+  clock_gettime(CLOCK_REALTIME, &now);
+  return (now.tv_sec - era.tv_sec) * 1000LL +
+         (now.tv_nsec - era.tv_nsec) / 1000000;
+}
 
-static void *_loop(void *arg) {
-  struct timespec era;
-  clock_gettime(CLOCK_REALTIME, &era);
+static void *loop(void *arg) {
   while (1) {
     pthread_mutex_lock(&lock);
     if (!running) {
       pthread_mutex_unlock(&lock);
       break;
     }
-    pthread_mutex_unlock(&lock);
+    timer_t *t = heap_min(&heap);
+    if (!t) {
+      pthread_mutex_unlock(&lock);
+      struct timespec nap = {.tv_sec = 0, .tv_nsec = 1000000}; /* 1ms */
+      nanosleep(&nap, NULL);
+    } else if (t->dt > passed()) {
+      struct timespec nap = {
+          .tv_sec = t->dt / 1000,
+          .tv_nsec = (t->dt % 1000) * 1000000,
+      };
+      pthread_mutex_unlock(&lock);
+      nanosleep(&nap, NULL);
+    } else {
+      void (*cb)(void *) = t->cb;
+      void *v = t->v;
+      heap_pop(&heap);
+      pthread_mutex_unlock(&lock);
+      if (cb) cb(v);
+    }
   }
   return NULL;
 }
 
 int timers_init(void) {
-  int res = 0;
   pthread_mutex_lock(&lock);
-  if (pthread_create(&th, NULL, _loop, NULL) < 0) {
-    res = -1;
+  if (running) {
+    pthread_mutex_unlock(&lock);
+    return 0;
   }
-end:
+  if (pthread_create(&th, NULL, loop, NULL) < 0) {
+    pthread_mutex_unlock(&lock);
+    return -1;
+  }
+  clock_gettime(CLOCK_REALTIME, &era);
+  heap.size = 0;
+  running = 1;
   pthread_mutex_unlock(&lock);
-  return res;
+  return 0;
 }
 
 int timers_cleanup(void) {
@@ -71,8 +140,14 @@ int timers_cleanup(void) {
   return 0;
 }
 
-int timers_start(int ms, void (*cb)(void *), void *v, int rep, int *id) {
+int timers_start(int ms, void (*cb)(void *), void *v) {
+  timer_t t = {.dt = passed() + ms, .cb = cb, .v = v};
+  pthread_mutex_lock(&lock);
+  if (!running) {
+    pthread_mutex_unlock(&lock);
+    return -1;
+  }
+  heap_push(&heap, &t);
+  pthread_mutex_unlock(&lock);
   return 0;
 }
-
-int timers_stop(int id) { return 0; }

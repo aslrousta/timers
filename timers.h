@@ -21,61 +21,33 @@
 #define __TIMERS_INCLUDED
 
 /**
- * Initializes the library.
- *
- * It must be called before any other function in this library.
+ * Initializes timers.
  *
  * @return 0 on success, -1 on error
  *
- * @remarks This function is thread-safe.
+ * @remarks It must be called before any other function in this library.
  * @see timers_cleanup()
  */
 int timers_init(void);
 
 /**
- * Deinitializes the library.
- *
- * It destroys all timers and frees all resources.
+ * Destroys all timers and frees all resources.
  *
  * @return 0 on success, -1 on error
  *
- * @remarks This function is thread-safe.
  * @see timers_init()
  */
 int timers_cleanup(void);
 
 /**
- * Start a timer.
- *
- * Creates a timer that will expire after the specified time. The timer is
- * started automatically and can be stopped by calling @c timers_stop()
- * function.
+ * Starts a timer that will expire after the specified time interval.
  *
  * @param ms    The interval of the timer in milliseconds
  * @param cb    The callback to call when the timer expires
  * @param v     The data to pass to the callback function
- * @param rep   Whether the timer should repeat or not
- * @param id    A pointer to store the timer id
  *
  * @return 0 on success, -1 on error
- *
- * @remarks This function is thread-safe.
- * @see timers_stop()
  */
-int timers_start(int ms, void (*cb)(void *), void *v, int rep, int *id);
-
-/**
- * Stop a timer
- *
- * Stops a timer that was started by @c timers_start() function.
- *
- * @param id    The id of the timer to stop
- *
- * @return 0 on success, -1 on error
- *
- * @remarks This function is thread-safe.
- * @see timers_start()
- */
-int timers_stop(int id);
+int timers_start(int ms, void (*cb)(void *), void *v);
 
 #endif /* __TIMERS_INCLUDED */
