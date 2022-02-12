@@ -16,19 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------
 
-cmake_minimum_required(VERSION 3.1)
-project(
-    timers VERSION 1.0.0
-    DESCRIPTION "c library to handle tons of timers"
-    HOMEPAGE_URL "https://github.com/aslrousta/timers"
-    LANGUAGES C)
+link_libraries(timers)
+include_directories(..)
 
-add_library(timers SHARED timers.c)
-
-find_package(Threads REQUIRED)
-target_compile_options(timers PRIVATE -Wall -Werror)
-target_link_libraries(timers PUBLIC Threads::Threads)
-
-enable_testing()
-add_subdirectory(tests)
-add_subdirectory(examples)
+add_executable(ticker ticker.c)

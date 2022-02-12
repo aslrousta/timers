@@ -23,20 +23,45 @@
 #include <pthread.h>
 #include <time.h>
 
-typedef long long duration_t; /* in ms */
+/* -----------------------------------------------------------------------
+ * Timer
+ * -----------------------------------------------------------------------
+ */
+
+/* keeps time intervals in milliseconds */
+typedef long long duration_t;
+
+/* the beginning time for all events */
+struct timespec era;
+
+/* computes the time passed in milliseconds */
+static duration_t passed() {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (now.tv_sec - era.tv_sec) * 1000LL +
+         (now.tv_nsec - era.tv_nsec) / 1000000;
+}
+
 typedef struct timer {
-  duration_t dt;
-  void (*cb)(void *);
-  void *v;
+  duration_t dt;      /* the expire time in milliseconds */
+  void (*cb)(void *); /* the function to be called when the timer expires */
+  void *v;            /* the callback function argument */
 } timer_t;
 
+/* -----------------------------------------------------------------------
+ * Min-heap
+ * -----------------------------------------------------------------------
+ */
+
 #define MAX_TIMERS_PER_HEAP 1000
+
 typedef struct heap {
   timer_t timers[MAX_TIMERS_PER_HEAP];
   int size;
 } heap_t;
 
-static void heap_push(heap_t *h, timer_t *t) {
+/* adds a timer to the heap */
+static void hadd(heap_t *h, timer_t *t) {
   int i = h->size;
   while (i > 0) {
     int p = (i - 1) / 2; /* parent */
@@ -48,7 +73,8 @@ static void heap_push(heap_t *h, timer_t *t) {
   h->size++;
 }
 
-static void heap_pop(heap_t *h) {
+/* removes the min timer from the heap */
+static void hdel(heap_t *h) {
   h->timers[0] = h->timers[--h->size];
   int i = 0;
   while (i < h->size) {
@@ -65,41 +91,39 @@ static void heap_pop(heap_t *h) {
   }
 }
 
-static timer_t *heap_min(heap_t *h) {
+/* returns the min timer from the heap without removing it */
+static timer_t *hmin(heap_t *h) {
   if (h->size == 0) return NULL;
   return &h->timers[0];
 }
+
+/* -----------------------------------------------------------------------
+ * Event loop
+ * -----------------------------------------------------------------------
+ */
 
 static heap_t heap;
 static pthread_t th;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int running = 0;
-struct timespec era;
 
-/* computes the passed time since era in milliseconds */
-static duration_t passed() {
-  struct timespec now;
-  clock_gettime(CLOCK_MONOTONIC, &now);
-  return (now.tv_sec - era.tv_sec) * 1000LL +
-         (now.tv_nsec - era.tv_nsec) / 1000000;
-}
+const struct timespec nap = {0, 10000000}; /* 10 ms */
 
-static void *loop(void *arg) {
+static void *eventloop(void *arg) {
   while (1) {
     pthread_mutex_lock(&lock);
     if (!running) {
       pthread_mutex_unlock(&lock);
       break;
     }
-    timer_t *t = heap_min(&heap);
+    timer_t *t = hmin(&heap);
     if (!t || t->dt > passed()) {
       pthread_mutex_unlock(&lock);
-      struct timespec nap = {0, 10000000}; /* 10 ms */
       nanosleep(&nap, NULL);
     } else {
       void (*cb)(void *) = t->cb;
       void *v = t->v;
-      heap_pop(&heap);
+      hdel(&heap);
       pthread_mutex_unlock(&lock);
       if (cb) cb(v);
     }
@@ -107,13 +131,18 @@ static void *loop(void *arg) {
   return NULL;
 }
 
+/* -----------------------------------------------------------------------
+ * Public API
+ * -----------------------------------------------------------------------
+ */
+
 int timers_init(void) {
   pthread_mutex_lock(&lock);
   if (running) {
     pthread_mutex_unlock(&lock);
     return 0;
   }
-  if (pthread_create(&th, NULL, loop, NULL) < 0) {
+  if (pthread_create(&th, NULL, eventloop, NULL) < 0) {
     pthread_mutex_unlock(&lock);
     return -1;
   }
@@ -143,7 +172,7 @@ int timers_start(int ms, void (*cb)(void *), void *v) {
     pthread_mutex_unlock(&lock);
     return -1;
   }
-  heap_push(&heap, &t);
+  hadd(&heap, &t);
   pthread_mutex_unlock(&lock);
   return 0;
 }
