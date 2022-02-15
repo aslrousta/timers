@@ -21,6 +21,7 @@
 
 #include <limits.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <time.h>
 
 /* -----------------------------------------------------------------------
@@ -53,48 +54,88 @@ typedef struct timer {
  * -----------------------------------------------------------------------
  */
 
-#define MAX_TIMERS_PER_HEAP 1000
+#define TIMERS_PER_CHUNK 100
+#define MAX_CHUNKS 1000
+
+typedef struct chunk {
+  timer_t timers[TIMERS_PER_CHUNK];
+  int nt;
+} chunk_t;
 
 typedef struct heap {
-  timer_t timers[MAX_TIMERS_PER_HEAP];
-  int size;
+  chunk_t *chunks[MAX_CHUNKS];
+  int nc, nt;
 } heap_t;
+
+static inline timer_t *at(heap_t *h, int n) {
+  int c = n / TIMERS_PER_CHUNK;
+  int i = n % TIMERS_PER_CHUNK;
+  return c < h->nc ? &h->chunks[c]->timers[i] : NULL;
+}
+
+static inline void hpush(heap_t *h, timer_t *t) {
+  int c = h->nt / TIMERS_PER_CHUNK;
+  int i = h->nt % TIMERS_PER_CHUNK;
+  if (c >= h->nc) {
+    h->chunks[c] = malloc(sizeof(chunk_t));
+    h->chunks[c]->nt = 0;
+    h->nc++;
+  }
+  h->chunks[c]->timers[i] = *t;
+  h->chunks[c]->nt++;
+  h->nt++;
+}
+
+static inline void hpop(heap_t *h) {
+  int c = (h->nt - 1) / TIMERS_PER_CHUNK;
+  int i = (h->nt - 1) % TIMERS_PER_CHUNK;
+  h->chunks[0]->timers[0] = h->chunks[c]->timers[i];
+  h->chunks[c]->nt--;
+  h->nt--;
+}
+
+static inline void swap(timer_t *ti, timer_t *tj) {
+  timer_t t = *ti;
+  *ti = *tj;
+  *tj = t;
+}
 
 /* adds a timer to the heap */
 static void hadd(heap_t *h, timer_t *t) {
-  int i = h->size;
+  timer_t *ti, *tp;
+  int i, p;
+  hpush(h, t);
+  i = h->nt - 1, ti = at(h, i);
   while (i > 0) {
-    int p = (i - 1) / 2; /* parent */
-    if (h->timers[p].dt <= t->dt) break;
-    h->timers[i] = h->timers[p];
-    i = p;
+    p = (i - 1) / 2, tp = at(h, p);
+    if (tp->dt <= ti->dt) break;
+    swap(ti, tp);
+    ti = tp, i = p;
   }
-  h->timers[i] = *t;
-  h->size++;
 }
 
 /* removes the min timer from the heap */
 static void hdel(heap_t *h) {
-  h->timers[0] = h->timers[--h->size];
-  int i = 0;
-  while (i < h->size) {
-    int l = i * 2 + 1; /* left child */
-    int r = i * 2 + 2; /* right child */
-    int min = i;
-    if (l < h->size && h->timers[l].dt < h->timers[min].dt) min = l;
-    if (r < h->size && h->timers[r].dt < h->timers[min].dt) min = r;
-    if (min == i) break;
-    timer_t tmp = h->timers[i];
-    h->timers[i] = h->timers[min];
-    h->timers[min] = tmp;
-    i = min;
+  timer_t *tl, *tr, *ti, *tm;
+  int l, r, m, i = 0;
+  hpop(h);
+  ti = at(h, i);
+  while (i < h->nt) {
+    l = i * 2 + 1, tl = at(h, l);
+    r = i * 2 + 2, tr = at(h, r);
+    m = i;
+    if (l < h->nt && tl->dt < ti->dt) m = l, tm = tl;
+    if (r < h->nt && tr->dt < ti->dt) m = r, tm = tr;
+    if (m == i) break;
+    swap(ti, tm);
+    ti = tm, i = m;
   }
 }
 
 /* returns the min timer from the heap without removing it */
 static timer_t *hmin(heap_t *h) {
-  if (h->size == 0) return NULL;
-  return &h->timers[0];
+  if (h->nt == 0) return NULL;
+  return &h->chunks[0]->timers[0];
 }
 
 /* -----------------------------------------------------------------------
@@ -102,7 +143,7 @@ static timer_t *hmin(heap_t *h) {
  * -----------------------------------------------------------------------
  */
 
-static heap_t heap;
+static heap_t heap = {0};
 static pthread_t th;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int running = 0;
@@ -147,7 +188,7 @@ int timers_init(void) {
     return -1;
   }
   clock_gettime(CLOCK_MONOTONIC, &era);
-  heap.size = 0;
+  heap.nt = 0;
   running = 1;
   pthread_mutex_unlock(&lock);
   return 0;

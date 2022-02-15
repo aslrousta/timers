@@ -38,10 +38,10 @@ $ ./ticker
 
 ## To Do
 
-- [ ] Extend to above 1k timers
+- [x] ~~Extend to above 1k timers~~ Now supports up to 100k timers
+- [x] ~~Reduce memory footprint~~ Now uses chunks to store timers
 - [ ] Support for Windows threads
 - [ ] Tickers (repeating timers)
-- [ ] Reduce memory footprint
 
 ## License
 
